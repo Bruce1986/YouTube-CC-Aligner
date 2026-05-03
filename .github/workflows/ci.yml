@@ -1,0 +1,42 @@
+name: Node CI
+
+on:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - '**/*.md'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+      - name: Skip npm install (no package.json)
+        if: ${{ hashFiles('package.json') == '' }}
+        run: echo "No package.json found, skipping install."
+      # Automatically attempt to fix lint issues first, then
+      # run the linter again to show any remaining problems
+      - name: Run lint fixes
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm run lint:fix --if-present
+      - name: Run linter
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm run lint --if-present
+      - name: Run tests
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm test --if-present
