@@ -1,20 +1,20 @@
 # Design Document: YouTube CC Aligner (暫名)
 
-**Date:** 2026-05-03
-**Author:** Bruce
-**Status:** Draft（本 repo 目前只有設計文件、尚無程式碼；下文的架構、API、測試與發布流程皆為規劃）
+- **Date:** 2026-05-03
+- **Author:** Bruce
+- **Status:** Draft（本 repo 目前只有設計文件、尚無程式碼；下文的架構、API、測試與發布流程皆為規劃）
 
 ## Summary
 這是一個基於 Manifest V3 的瀏覽器擴充套件。旨在解決 YouTube 單頁應用程式（SPA）無法針對單一頻道記憶字幕（CC）設定的痛點。透過注入腳本攔截 YouTube 播放器底層 API，實現「Record & Replay（錄製與重播）」機制，確保觀眾在不同語系的頻道間切換時，能自動載入符合該頻道情境的精準字幕設定。
 
 ## Overview
 本系統為純客戶端架構，核心由三個模組組成：
-1. **Event Interceptor (Content Script):** 監聽 SPA 導航事件（`yt-navigate-finish`）與播放器狀態變更。
-2. **Player Controller (Main World Script):** Content Script 跑在隔離環境（Isolated World），看不到網頁的 JS 物件，因此這一段要在網頁的 Main World 執行，才能與 `movie_player` 物件互動、讀寫字幕狀態。注入方式採 `content_scripts` 的 `"world": "MAIN"`（Chrome 111 起支援，不需 `scripting` 權限）；與 Isolated World 之間以 `window.postMessage` 或 CustomEvent 通訊。
-3. **State Manager (Storage):** 基於 `chrome.storage.local` 的輕量級狀態機，負責比對並快取頻道與語言的映射關係。
+1. **Event Interceptor (Isolated World Content Script):** 監聽 SPA 導航事件（`yt-navigate-finish`），並作為 Main World 與 Storage 之間的唯一橋接。
+2. **Player Controller (Main World Content Script):** 一般 Content Script 跑在隔離環境（Isolated World），看不到網頁的 JS 物件，因此這一段要在網頁的 Main World 執行，才能與 `movie_player` 物件互動、讀寫字幕狀態。注入方式採 `content_scripts` 的 `"world": "MAIN"`（Chrome 111 起支援，不需 `scripting` 權限）；與 Isolated World 之間以 `window.postMessage` 或 CustomEvent 通訊。播放器狀態與字幕變更也在這一段監聽；Main World 腳本不能呼叫 `chrome.*` API，讀寫設定都要透過訊息請 Isolated World 代為存取。
+3. **State Manager (Isolated World):** 唯一呼叫 `chrome.storage.local` 的模組，基於它 的輕量級狀態機，負責比對並快取頻道與語言的映射關係。
 
 ## Background
-YouTube 目前的字幕設定是全域且基於 Session/Cookie 的。使用者若在英文頻道開啟英文字幕，切換到母語頻道時，往往會被迫看著系統自動生成的突兀字幕，必須手動關閉；切換回日文頻道時，又得重新手動開啟日文字幕。這種繁瑣的重複操作嚴重干擾了多語系使用者的觀影體驗。
+依作者的使用觀察，YouTube 的字幕偏好是全域的、不會按頻道記憶（背後機制未查證）。使用者若在英文頻道開啟英文字幕，切換到母語頻道時，往往會被迫看著系統自動生成的突兀字幕，必須手動關閉；切換回日文頻道時，又得重新手動開啟日文字幕。這種繁瑣的重複操作嚴重干擾了多語系使用者的觀影體驗。
 
 ## Goals & Non-Goals
 **Goals:**
@@ -38,7 +38,7 @@ YouTube 目前的字幕設定是全域且基於 Session/Cookie 的。使用者�
 ### API / Interface Definition
 系統將與 YouTube 的未公開 API（Undocumented API）進行互動，這也是技術風險最高的部分，需建立嚴謹的 Try-Catch 與 Retry 機制。
 
-> 以下方法名稱、參數形式與事件名稱都沒有官方文件，是社群觀察所得、尚未驗證，列為 Phase 1 PoC 要先確認的項目。
+> 以下方法名稱、參數形式與事件名稱都沒有官方文件，是社群觀察所得、尚未驗證，列為 Phase 1 PoC 要先確認的項目。同樣待 PoC 確認的還有：如何偵測使用者手動切換字幕、如何避免把 Replay 自己呼叫的 `setOption` 誤記成使用者選擇（例如 replay 期間以旗標忽略回呼）、Channel ID 從哪裡取得與在哪個 world 讀取，以及 `yt-navigate-finish` 的 detail 能否跨 world 讀取。
 
 1.  **注入點 API:**
     *   `document.getElementById('movie_player')`
@@ -74,8 +74,9 @@ YouTube 目前的字幕設定是全域且基於 Session/Cookie 的。使用者�
 *   **套件規範：** Manifest V3 (Google Chrome 強制要求)。
 
 ## Security
-*   **XSS 防禦：** 注入 Main World 的腳本必須是靜態打包好的字串或檔案，嚴禁使用 `eval()` 或動態拼接使用者輸入的字串來執行。
-*   **權限最小化：** `manifest.json` 的 `permissions` 只宣告 `["storage"]`；`host_permissions`（MV3 中是獨立的頂層欄位）只宣告 `["https://*.youtube.com/*"]`。不申請 `activeTab`、`tabs`、`scripting` 等其他權限。
+*   **XSS 防禦：** Main World 腳本是 manifest `content_scripts` 宣告的靜態打包檔案，嚴禁使用 `eval()`、`new Function` 或動態拼接字串執行。
+*   **訊息通道驗證：** `window.postMessage` 可被頁面上任何腳本偽造。Isolated World 收訊時須檢查 `event.source === window`、固定的訊息 type 與欄位 schema，並驗證 Channel ID、`lang_code` 格式後才寫入 Storage。
+*   **權限最小化：** `manifest.json` 的 `permissions` 只宣告 `["storage"]`；注入範圍由 `content_scripts.matches`（`https://*.youtube.com/*`）限定，`host_permissions`（MV3 中是獨立的頂層欄位）預設不宣告，PoC 確認需要時才加。不申請 `activeTab`、`tabs`、`scripting` 等其他權限。
 
 ## Test Plan
 針對 SPA 前端自動化的痛點，測試計畫是此專案的靈魂：
@@ -83,7 +84,7 @@ YouTube 目前的字幕設定是全域且基於 Session/Cookie 的。使用者�
 *   **E2E Test (Playwright / Puppeteer):**
     *   這是最重要的防線。撰寫自動化腳本，實際開啟瀏覽器載入 YouTube。載入擴充套件需要 headed 模式或 `--headless=new`；對真實 YouTube 自動化也可能被機器人偵測擋下，PoC 階段要一併確認可行性。
     *   *Test Case 1:* 進入 A 頻道影片 1 -> 開啟 CC（en） -> 進入 B 頻道影片 -> 斷言 B 頻道依自己的設定（未記錄則走預設降級） -> 進入 A 頻道影片 2 -> 斷言（Assert）CC 已自動開啟且語言為 en。
-    *   *持續整合（CI）：* 設定 GitHub Actions 每週定期跑一次 E2E，若 YouTube 偷偷改版導致 API 失效，我們能在第一時間收到警報。
+    *   *持續整合（CI）：* 規劃每週在 GitHub Actions 定期跑一次 E2E，作為 YouTube 改版導致 API 失效的預警（最差約延遲一週發現；能否通過機器人偵測待 PoC 評估）。
 
 ## Rollout / Deployment Plan
 1.  **Alpha Release:** 發布至 GitHub Releases，提供 ZIP 檔供開發者以「未封裝擴充功能」載入測試。
@@ -95,7 +96,7 @@ YouTube 目前的字幕設定是全域且基於 Session/Cookie 的。使用者�
 
 ## Caveats
 *   **YouTube API 變更：** `movie_player` 屬於 YouTube 內部未公開的 API。沒有任何穩定性保證，Google 隨時可能將其變更、混淆（Obfuscate）或移除。
-*   **廣告干擾：** YouTube 插播廣告時，載入的影片容器與主影片不同，攔截腳本需具備判斷當前是否為廣告（Ad-playing state）的能力，避免將字幕設定套用到廣告上。
+*   **廣告干擾：** YouTube 插播廣告時播放器狀態可能與正片不同（具體判定方式待 PoC 確認），攔截腳本需能判斷當前是否為廣告（Ad-playing state），避免將字幕設定套用或記錄到廣告上。
 
 ## Work Estimate
 *   **Phase 1 (PoC):** 驗證 Content Script 注入與 `movie_player` API 控制可行性 (約 1-2 天)。
