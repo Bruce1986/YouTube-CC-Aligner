@@ -11,7 +11,7 @@
 本系統為純客戶端架構，核心由三個模組組成：
 1. **Event Interceptor (Isolated World Content Script):** 監聽 SPA 導航事件（`yt-navigate-finish`），並作為 Main World 與 Storage 之間的唯一橋接。
 2. **Player Controller (Main World Content Script):** 一般 Content Script 跑在隔離環境（Isolated World），看不到網頁的 JS 物件，因此這一段要在網頁的 Main World 執行，才能與 `movie_player` 物件互動、讀寫字幕狀態。注入方式採 `content_scripts` 的 `"world": "MAIN"`（Chrome 111 起支援，不需 `scripting` 權限）；與 Isolated World 之間以 `window.postMessage` 或 CustomEvent 通訊。播放器狀態與字幕變更也在這一段監聽；Main World 腳本不能呼叫 `chrome.*` API，讀寫設定都要透過訊息請 Isolated World 代為存取。
-3. **State Manager (Isolated World):** 唯一呼叫 `chrome.storage.local` 的模組，基於它 的輕量級狀態機，負責比對並快取頻道與語言的映射關係。
+3. **State Manager (Isolated World):** 唯一呼叫 `chrome.storage.local` 的模組，是一個輕量級狀態機，負責比對並快取頻道與語言的映射關係。
 
 ## Background
 依作者的使用觀察，YouTube 的字幕偏好是全域的、不會按頻道記憶（背後機制未查證）。使用者若在英文頻道開啟英文字幕，切換到母語頻道時，往往會被迫看著系統自動生成的突兀字幕，必須手動關閉；切換回日文頻道時，又得重新手動開啟日文字幕。這種繁瑣的重複操作嚴重干擾了多語系使用者的觀影體驗。
