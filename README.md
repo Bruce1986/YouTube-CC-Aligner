@@ -72,7 +72,7 @@ YouTube 目前的字幕設定是全域且基於 Session/Cookie 的。使用者�
 
 ## Security
 *   **XSS 防禦：** 注入 Main World 的腳本必須是靜態打包好的字串或檔案，嚴禁使用 `eval()` 或動態拼接使用者輸入的字串來執行。
-*   **權限最小化：** `manifest.json` 中的 `permissions` 僅申請 `storage` 與特定的 `host_permissions` (`*://*[.youtube.com/](https://.youtube.com/)*`)，絕對不申請 `activeTab` 以外的不必要權限。
+*   **權限最小化：** `manifest.json` 中的 `permissions` 僅申請 `storage` 與特定的 `host_permissions` (`*://*.youtube.com/*`)，絕對不申請 `activeTab` 以外的不必要權限。
 
 ## Test Plan
 針對 SPA 前端自動化的痛點，測試計畫是此專案的靈魂：
@@ -98,9 +98,3 @@ YouTube 目前的字幕設定是全域且基於 Session/Cookie 的。使用者�
 *   **Phase 1 (PoC):** 驗證 Content Script 注入與 `movie_player` API 控制可行性 (約 1-2 天)。
 *   **Phase 2 (MVP):** 完成 Record & Replay 核心邏輯與 Storage 串接，能順暢處理 SPA 切換 (約 3-4 天)。
 *   **Phase 3 (Polish):** 加入 Cold Start 嗅探邏輯、防禦性邊界測試與 Playwright E2E 腳本 (約 3-5 天)。
-
----
-
-這份文件抽掉了伺服器 SLA、容量規劃等不適用的項目，並加重了 Test Plan 與 Caveats 的比重。您可以直接把這個架構拿去當作 GitHub Repo 的 `README.md` 或 `CONTRIBUTING.md` 的基礎。
-
-【輸出結束】
